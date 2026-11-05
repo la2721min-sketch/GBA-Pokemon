@@ -1,297 +1,346 @@
+
 #include <3ds.h>
 #include <citro2d.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <stdbool.h>
 #include <math.h>
-#include <string.h>
 
 #define SCREEN_W 400
 #define SCREEN_H 240
 #define TILE 16
-#define MAP_W 32
-#define MAP_H 32
+#define MAP_W 40
+#define MAP_H 30
 
 #define PARTY_SIZE 6
 
 typedef struct {
     float x, y;
-    float speed;
-    int direction;
-    int moving;
-    int frame;
-} Player;
+    float targetX, targetY;
+} Character;
 
 typedef struct {
-    float x, y;
     int species;
     int level;
     int hp;
     int maxHP;
-    int following;
 } Pokemon;
 
-static Player player = {
-    160,160,1.7f,0,0,0
-};
+static Character player = {8, 8, 8, 8};
+static Character follower = {7, 8, 7, 8};
 
 static Pokemon party[PARTY_SIZE] = {
-    {145,185,1,12,45,45,1},
-    {0,0,4,12,40,40,0},
-    {0,0,7,12,42,42,0},
-    {0,0,25,12,35,35,0},
-    {0,0,133,12,38,38,0},
-    {0,0,39,12,50,50,0}
+    {25, 5, 20, 20},
+    {1, 5, 20, 20},
+    {4, 5, 20, 20},
+    {7, 5, 20, 20},
+    {133, 5, 20, 20},
+    {39, 5, 20, 20}
 };
 
-static C3D_RenderTarget *topTarget;
-static C2D_TextBuf textBuffer;
-static C2D_Text text;
+static int cameraX = 0;
+static int cameraY = 0;
+static int npcX = 13;
+static int npcY = 8;
+static int messageTimer = 0;
 
-static int worldMap[MAP_H][MAP_W];
-static int frameCount = 0;
+static const u32 GRASS  = 0xFF55A84AFF;
+static const u32 DARK_GRASS = 0xFF39863AFF;
+static const u32 PATH   = 0xFFBDA16AFF;
+static const u32 TREE   = 0xFF17652EFF;
+static const u32 WATER  = 0xFFCC8844FF;
+static const u32 HOUSE  = 0xFFAA5544FF;
+static const u32 ROOF   = 0xFF663333FF;
 
-static char message[128] = "Welcome to Pokemon World!";
-
-static void createMap(void)
+static int tileAt(int x, int y)
 {
-    for(int y=0;y<MAP_H;y++)
+    if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H)
+        return 1;
+
+    if (x == 0 || y == 0 || x == MAP_W - 1 || y == MAP_H - 1)
+        return 1;
+
+    /* Water pond */
+    if (x >= 24 && x <= 29 && y >= 5 && y <= 9)
+        return 3;
+
+    /* House */
+    if (x >= 5 && x <= 9 && y >= 3 && y <= 6)
+        return 4;
+
+    /* Main road */
+    if (y == 12 || y == 13 || x == 18)
+        return 2;
+
+    /* Trees */
+    if ((x % 7 == 0 && y % 5 == 0) ||
+        (x == 3 && y > 15 && y < 23) ||
+        (x == 35 && y > 12 && y < 25))
+        return 1;
+
+    /* Tall grass */
+    if (x >= 20 && x <= 33 && y >= 15 && y <= 24)
+        return 5;
+
+    return 0;
+}
+
+static bool blocked(int x, int y)
+{
+    int tile = tileAt(x, y);
+
+    if (tile == 1 || tile == 3 || tile == 4)
+        return true;
+
+    if (x == npcX && y == npcY)
+        return true;
+
+    return false;
+}
+
+static void rect(float x, float y, float w, float h, u32 color)
+{
+    C2D_DrawRectSolid(x, y, 0, w, h, color);
+}
+
+static void drawTile(int type, float x, float y)
+{
+    switch (type)
     {
-        for(int x=0;x<MAP_W;x++)
-        {
-            worldMap[y][x]=0;
+        case 0:
+            rect(x, y, TILE, TILE, GRASS);
+            rect(x + 4, y + 5, 2, 2, DARK_GRASS);
+            rect(x + 12, y + 11, 2, 2, DARK_GRASS);
+            break;
 
-            if(x==0 || y==0 ||
-               x==MAP_W-1 || y==MAP_H-1)
-                worldMap[y][x]=2;
+        case 1:
+            rect(x, y, TILE, TILE, DARK_GRASS);
+            rect(x + 2, y + 1, 12, 11, TREE);
+            rect(x + 6, y + 11, 4, 5, 0xFF754522);
+            break;
 
-            if((x==5 || x==6) && y>4 && y<25)
-                worldMap[y][x]=1;
+        case 2:
+            rect(x, y, TILE, TILE, PATH);
+            rect(x + 3, y + 4, 2, 2, 0xFFAA8B59);
+            break;
 
-            if((x==20 || x==21) && y>5 && y<27)
-                worldMap[y][x]=1;
-        }
-    }
+        case 3:
+            rect(x, y, TILE, TILE, WATER);
+            rect(x + 3, y + 4, 8, 2, 0xFF77CFFFFF);
+            break;
 
-    for(int x=0;x<MAP_W;x++)
-    {
-        worldMap[15][x]=3;
-        worldMap[16][x]=3;
+        case 4:
+            rect(x, y, TILE, TILE, HOUSE);
+            rect(x, y, TILE, 5, ROOF);
+            rect(x + 5, y + 7, 6, 9, 0xFF553322);
+            break;
+
+        case 5:
+            rect(x, y, TILE, TILE, GRASS);
+            rect(x + 3, y + 2, 3, 12, 0xFF26833AFF);
+            rect(x + 9, y + 1, 3, 13, 0xFF287C35FF);
+            rect(x + 13, y + 5, 2, 9, 0xFF2D923FFF);
+            break;
     }
 }
 
-static void drawTile(int type,float x,float y)
+static void drawPlayer(float x, float y)
 {
-    u32 color;
+    /* Simple pixel-art trainer */
+    rect(x + 4, y + 1, 8, 5, 0xFFFFD6A0);
+    rect(x + 3, y, 10, 3, 0xFFCC3333);
+    rect(x + 4, y + 6, 8, 6, 0xFF3366CC);
+    rect(x + 3, y + 12, 4, 4, 0xFF333333);
+    rect(x + 9, y + 12, 4, 4, 0xFF333333);
+}
 
-    switch(type)
-    {
-        case 0: color=C2D_Color32(70,170,75,255);break;
-        case 1: color=C2D_Color32(25,110,40,255);break;
-        case 2: color=C2D_Color32(90,65,40,255);break;
-        case 3: color=C2D_Color32(190,160,100,255);break;
-        default: color=0xFFFFFFFF;break;
-    }
+static void drawFollower(float x, float y)
+{
+    /* Pikachu-style placeholder follower */
+    rect(x + 4, y + 5, 8, 8, 0xFFFFDD33);
+    rect(x + 3, y + 2, 4, 5, 0xFFFFDD33);
+    rect(x + 9, y + 2, 4, 5, 0xFFFFDD33);
+    rect(x + 2, y + 1, 2, 4, 0xFF333333);
+    rect(x + 12, y + 1, 2, 4, 0xFF333333);
+    rect(x + 3, y + 9, 2, 2, 0xFFCC3333);
+    rect(x + 11, y + 9, 2, 2, 0xFFCC3333);
+}
 
-    C2D_DrawRectSolid(
-        x,y,TILE,TILE,0,color
-    );
+static void drawNPC(float x, float y)
+{
+    rect(x + 4, y + 1, 8, 5, 0xFFFFD6A0);
+    rect(x + 3, y, 10, 3, 0xFF6633AA);
+    rect(x + 4, y + 6, 8, 6, 0xFFEEEEEE);
+    rect(x + 3, y + 12, 4, 4, 0xFF333333);
+    rect(x + 9, y + 12, 4, 4, 0xFF333333);
 }
 
 static void drawWorld(void)
 {
-    float cameraX=player.x-192;
-    float cameraY=player.y-112;
+    int startX = cameraX / TILE;
+    int startY = cameraY / TILE;
 
-    for(int y=0;y<MAP_H;y++)
+    for (int y = 0; y < 17; y++)
     {
-        for(int x=0;x<MAP_W;x++)
+        for (int x = 0; x < 27; x++)
         {
+            int tx = startX + x;
+            int ty = startY + y;
+
             drawTile(
-                worldMap[y][x],
-                x*TILE-cameraX,
-                y*TILE-cameraY
+                tileAt(tx, ty),
+                tx * TILE - cameraX,
+                ty * TILE - cameraY
             );
         }
     }
-}
 
-static void drawPlayer(void)
-{
-    float x=player.x-(player.x-192);
-    float y=player.y-(player.y-112);
-
-    C2D_DrawRectSolid(
-        x-5,y-8,10,12,0,
-        C2D_Color32(220,70,50,255)
+    drawNPC(
+        npcX * TILE - cameraX,
+        npcY * TILE - cameraY
     );
 
-    C2D_DrawRectSolid(
-        x-5,y-12,10,5,0,
-        C2D_Color32(40,50,140,255)
+    drawFollower(
+        follower.x * TILE - cameraX,
+        follower.y * TILE - cameraY
     );
 
-    C2D_DrawCircleSolid(
-        x,y-15,0,4,
-        C2D_Color32(240,190,145,255)
+    drawPlayer(
+        player.x * TILE - cameraX,
+        player.y * TILE - cameraY
     );
 }
 
-static void drawFollower(void)
+static void updateCamera(void)
 {
-    Pokemon *p=&party[0];
+    cameraX = (int)(player.x * TILE - SCREEN_W / 2 + TILE / 2);
+    cameraY = (int)(player.y * TILE - SCREEN_H / 2 + TILE / 2);
 
-    float x=p->x-(player.x-192);
-    float y=p->y-(player.y-112);
+    if (cameraX < 0) cameraX = 0;
+    if (cameraY < 0) cameraY = 0;
 
-    C2D_DrawCircleSolid(
-        x,y,0,7,
-        C2D_Color32(230,90,60,255)
-    );
+    int maxX = MAP_W * TILE - SCREEN_W;
+    int maxY = MAP_H * TILE - SCREEN_H;
 
-    C2D_DrawCircleSolid(
-        x,y-2,0,4,
-        C2D_Color32(255,210,180,255)
-    );
+    if (cameraX > maxX) cameraX = maxX;
+    if (cameraY > maxY) cameraY = maxY;
 }
 
 static void updateFollower(void)
 {
-    Pokemon *p=&party[0];
+    follower.targetX = player.x - 1;
+    follower.targetY = player.y;
 
-    float targetX=player.x;
-    float targetY=player.y+22;
-
-    p->x+=(targetX-p->x)*0.12f;
-    p->y+=(targetY-p->y)*0.12f;
+    follower.x += (follower.targetX - follower.x) * 0.15f;
+    follower.y += (follower.targetY - follower.y) * 0.15f;
 }
 
-static void updatePlayer(void)
+static void showMessage(const char *message)
 {
-    circlePosition circle;
-    hidCircleRead(&circle);
-
-    u32 keys=hidKeysHeld();
-
-    float dx=circle.dx/128.0f;
-    float dy=-circle.dy/128.0f;
-
-    if(keys&KEY_LEFT) dx-=1;
-    if(keys&KEY_RIGHT) dx+=1;
-    if(keys&KEY_UP) dy-=1;
-    if(keys&KEY_DOWN) dy+=1;
-
-    float length=sqrtf(dx*dx+dy*dy);
-
-    player.moving=length>0.15f;
-
-    if(length>1)
-    {
-        dx/=length;
-        dy/=length;
-    }
-
-    if(player.moving)
-    {
-        player.x+=dx*player.speed;
-        player.y+=dy*player.speed;
-        player.frame++;
-
-        if(fabsf(dx)>fabsf(dy))
-            player.direction=dx>0?1:3;
-        else
-            player.direction=dy>0?2:0;
-    }
-
-    if(player.x<16) player.x=16;
-    if(player.y<16) player.y=16;
-
-    if(player.x>MAP_W*TILE-16)
-        player.x=MAP_W*TILE-16;
-
-    if(player.y>MAP_H*TILE-16)
-        player.y=MAP_H*TILE-16;
-
-    updateFollower();
+    consoleClear();
+    printf("\n\n  %s\n", message);
+    messageTimer = 180;
 }
 
-static void drawBottomScreen(void)
+static void interact(void)
 {
-    C2D_TargetClear(
-        NULL,C2D_Color32(35,45,65,255)
-    );
+    int px = (int)(player.x + 0.5f);
+    int py = (int)(player.y + 0.5f);
 
-    C2D_SceneBegin(NULL);
+    int dx = (npcX > px) ? npcX - px : px - npcX;
+    int dy = (npcY > py) ? npcY - py : py - npcY;
 
-    C2D_DrawRectSolid(
-        10,10,300,100,0,
-        C2D_Color32(240,240,240,255)
-    );
-
-    C2D_DrawText(
-        &text,C2D_AlignLeft,
-        20,20,0,0.6f,0.6f,
-        C2D_Color32(20,20,20,255)
-    );
-
-    C2D_DrawRectSolid(
-        10,125,300,90,0,
-        C2D_Color32(60,90,65,255)
-    );
+    if (dx + dy <= 1)
+    {
+        showMessage("Hello, Trainer! Welcome!");
+    }
+    else
+    {
+        showMessage("Your Pokemon is following you!");
+    }
 }
 
 int main(void)
 {
     gfxInitDefault();
+    consoleInit(GFX_BOTTOM, NULL);
 
     C3D_Init(C3D_DEFAULT_CMDBUF_SIZE);
     C2D_Init(C2D_DEFAULT_MAX_OBJECTS);
     C2D_Prepare();
 
-    topTarget=C2D_CreateScreenTarget(
-        GFX_TOP,GFX_LEFT
-    );
+    C2D_Target *top = C2D_CreateScreenTarget(GFX_TOP, GFX_LEFT);
 
-    consoleInit(GFX_BOTTOM,NULL);
+    consoleClear();
+    printf("POKEMON WORLD\n");
+    printf("--------------------\n");
+    printf("Welcome, Trainer!\n");
+    printf("A: Talk / Interact\n");
+    printf("D-Pad: Move\n");
+    printf("START: Exit\n");
 
-    createMap();
+    bool running = true;
 
-    while(aptMainLoop())
+    while (aptMainLoop() && running)
     {
         hidScanInput();
 
-        u32 down=hidKeysDown();
+        u32 down = hidKeysDown();
+        u32 held = hidKeysHeld();
 
-        if(down&KEY_START)
-            break;
+        if (down & KEY_START)
+            running = false;
 
-        updatePlayer();
+        int dx = 0;
+        int dy = 0;
+
+        if (held & KEY_UP) dy = -1;
+        if (held & KEY_DOWN) dy = 1;
+        if (held & KEY_LEFT) dx = -1;
+        if (held & KEY_RIGHT) dx = 1;
+
+        if (dx != 0 || dy != 0)
+        {
+            int nx = (int)(player.x + dx);
+            int ny = (int)(player.y + dy);
+
+            if (!blocked(nx, ny))
+            {
+                player.x = nx;
+                player.y = ny;
+            }
+        }
+
+        if (down & KEY_A)
+            interact();
+
+        updateFollower();
+        updateCamera();
 
         C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
 
-        C2D_TargetClear(
-            topTarget,
-            C2D_Color32(100,180,240,255)
-        );
-
-        C2D_SceneBegin(topTarget);
+        C2D_TargetClear(top, 0xFF000000);
+        C2D_SceneBegin(top);
 
         drawWorld();
-        drawFollower();
-        drawPlayer();
 
         C3D_FrameEnd(0);
 
-        consoleClear();
-
-        printf("POKEMON WORLD GBA EDITION\n");
-        printf("=========================\n\n");
-        printf("CIRCLE PAD: MOVE\n");
-        printf("D-PAD: MOVE\n");
-        printf("START: EXIT\n\n");
-        printf("PARTY: 6 POKEMON\n");
-        printf("FOLLOWER: %s\n", "ACTIVE");
-        printf("\n%s\n",message);
-
-        frameCount++;
+        if (messageTimer > 0)
+        {
+            messageTimer--;
+        }
+        else
+        {
+            consoleClear();
+            printf("POKEMON WORLD\n");
+            printf("--------------------\n");
+            printf("A: Talk / Interact\n");
+            printf("D-Pad: Move\n");
+            printf("START: Exit\n");
+            printf("\nParty: %d Pokemon", PARTY_SIZE);
+            printf("\nFollower: Pikachu");
+        }
     }
 
     C2D_Fini();
