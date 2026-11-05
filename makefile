@@ -1,36 +1,30 @@
+
 ifeq ($(strip $(DEVKITPRO)),)
 $(error DEVKITPRO is not set)
 endif
 
-include $(DEVKITPRO)/devkitARM/3ds_rules
+include $(DEVKITPRO)/gba_rules
 
 TARGET := pokemon_world
 BUILD := build
 SOURCES := source
+DATA := data
+GRAPHICS := graphics
 
-ARCH := -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft
+ARCH := -mthumb -mthumb-interwork
 
-CFLAGS := -g -Wall -O2 -mword-relocations \
-          -ffunction-sections -fdata-sections \
-          $(ARCH) -D__3DS__ \
-          -I$(DEVKITPRO)/libctru/include \
-          -I$(DEVKITPRO)/citro3d/include \
-          -I$(DEVKITPRO)/citro2d/include
+CFLAGS := -g -Wall -O2 $(ARCH) \
+          -ffunction-sections -fdata-sections
 
-LDFLAGS := -specs=3dsx.specs -g $(ARCH) \
-           -L$(DEVKITPRO)/libctru/lib \
-           -L$(DEVKITPRO)/citro3d/lib \
-           -L$(DEVKITPRO)/citro2d/lib
+LDFLAGS := -g $(ARCH) \
+           -Wl,--gc-sections \
+           -Wl,-Map,$(TARGET).map
 
-LIBS := -lcitro2d -lcitro3d -lctru -lm
+LIBS := -lgba
 
 .PHONY: all clean
 
-all: $(TARGET).3dsx
-
-$(TARGET).3dsx: $(SOURCES)/main.c
-	$(CC) $(CFLAGS) $< $(LDFLAGS) $(LIBS) -o $(TARGET).elf
-	3dsxtool $(TARGET).elf $@
+all: $(TARGET).gba
 
 clean:
-	rm -f $(TARGET).elf $(TARGET).3dsx
+	rm -rf $(BUILD) $(TARGET).gba $(TARGET).elf $(TARGET).map
