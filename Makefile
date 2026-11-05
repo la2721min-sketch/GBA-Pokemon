@@ -1,3 +1,4 @@
+
 ifeq ($(strip $(DEVKITPRO)),)
 $(error DEVKITPRO is not set. Install devkitPro with devkitARM and libgba.)
 endif
@@ -9,7 +10,7 @@ BUILD       := build
 SOURCES     := source
 INCLUDES    :=
 
-ARCH        := -mthumb -mthumb-interwork
+ARCH        := -mthumb
 
 CFLAGS      := -g -Wall -Wextra -O2 $(ARCH) \
                -ffunction-sections -fdata-sections \
